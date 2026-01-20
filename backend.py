@@ -51,6 +51,7 @@ app.add_middleware(
 class EmbedRequest(BaseModel):
     workspaceId: str
     reportId: str
+    datasetId: str
 
 
 class RuntimeVisualsRequest(BaseModel):
@@ -133,7 +134,6 @@ def load_runtime_template() -> dict:
 #         raise HTTPException(status_code=500, detail=str(e))
 
 
-
 @app.post("/embed-token")
 def generate_embed_token(data: EmbedRequest):
     try:
@@ -149,14 +149,13 @@ def generate_embed_token(data: EmbedRequest):
             f"groups/{data.workspaceId}/reports/{data.reportId}/GenerateToken"
         )
 
+        # ✅ Dataset explicitly provided (NO RLS)
         payload = {
             "accessLevel": "Edit",
             "allowSaveAs": True,
-            "identities": [
+            "datasets": [
                 {
-                    "username": "lovable-user",
-                    "roles": [],
-                    "datasets": []
+                    "id": data.datasetId
                 }
             ]
         }
@@ -177,12 +176,12 @@ def generate_embed_token(data: EmbedRequest):
                 f"https://app.powerbi.com/reportEmbed"
                 f"?reportId={data.reportId}"
                 f"&groupId={data.workspaceId}"
-            )
+            ),
+            "datasetId": data.datasetId
         }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 
 # =========================================================
