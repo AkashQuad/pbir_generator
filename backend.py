@@ -93,44 +93,96 @@ def load_runtime_template() -> dict:
 # =========================================================
 # API 1️⃣ : EMBED TOKEN
 # =========================================================
+# @app.post("/embed-token")
+# def generate_embed_token(data: EmbedRequest):
+#     try:
+#         access_token = get_access_token()
+#         headers = {
+#             "Authorization": f"Bearer {access_token}",
+#             "Content-Type": "application/json"
+#         }
+
+#         report_url = f"{API_ROOT}/groups/{data.workspaceId}/reports/{data.reportId}"
+#         report_res = requests.get(report_url, headers=headers)
+
+#         if report_res.status_code != 200:
+#             raise HTTPException(report_res.status_code, "Failed to fetch report info")
+
+#         report_info = report_res.json()
+#         dataset_id = report_info["datasetId"]
+
+#         token_url = f"{API_ROOT}/groups/{data.workspaceId}/reports/{data.reportId}/GenerateToken"
+#         payload = {
+#             "accessLevel": "Edit",
+#             "allowSaveAs": True,
+#             "datasetId": dataset_id
+#         }
+
+#         token_res = requests.post(token_url, headers=headers, json=payload)
+
+#         if token_res.status_code != 200:
+#             raise HTTPException(token_res.status_code, "Failed to generate embed token")
+
+#         return {
+#             "embedToken": token_res.json()["token"],
+#             "embedUrl": report_info["embedUrl"],
+#             "datasetId": dataset_id
+#         }
+
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
+
+
+
 @app.post("/embed-token")
 def generate_embed_token(data: EmbedRequest):
     try:
         access_token = get_access_token()
+
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json"
         }
 
-        report_url = f"{API_ROOT}/groups/{data.workspaceId}/reports/{data.reportId}"
-        report_res = requests.get(report_url, headers=headers)
+        token_url = (
+            f"https://api.powerbi.com/v1.0/myorg/"
+            f"groups/{data.workspaceId}/reports/{data.reportId}/GenerateToken"
+        )
 
-        if report_res.status_code != 200:
-            raise HTTPException(report_res.status_code, "Failed to fetch report info")
-
-        report_info = report_res.json()
-        dataset_id = report_info["datasetId"]
-
-        token_url = f"{API_ROOT}/groups/{data.workspaceId}/reports/{data.reportId}/GenerateToken"
         payload = {
             "accessLevel": "Edit",
             "allowSaveAs": True,
-            "datasetId": dataset_id
+            "identities": [
+                {
+                    "username": "lovable-user",
+                    "roles": [],
+                    "datasets": []
+                }
+            ]
         }
 
         token_res = requests.post(token_url, headers=headers, json=payload)
 
         if token_res.status_code != 200:
-            raise HTTPException(token_res.status_code, "Failed to generate embed token")
+            raise HTTPException(
+                status_code=token_res.status_code,
+                detail=token_res.text
+            )
+
+        token_json = token_res.json()
 
         return {
-            "embedToken": token_res.json()["token"],
-            "embedUrl": report_info["embedUrl"],
-            "datasetId": dataset_id
+            "embedToken": token_json["token"],
+            "embedUrl": (
+                f"https://app.powerbi.com/reportEmbed"
+                f"?reportId={data.reportId}"
+                f"&groupId={data.workspaceId}"
+            )
         }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 # =========================================================
