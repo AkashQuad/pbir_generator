@@ -90,6 +90,25 @@ def load_runtime_template() -> dict:
     data = blob_client.download_blob().readall()
     return json.loads(data)
 
+# =========================================================
+# API 0️⃣ : GET POWER BI ACCESS TOKEN (DEBUG / INTERNAL)
+# =========================================================
+@app.get("/powerbi-access-token")
+def get_powerbi_access_token():
+    try:
+        access_token = get_access_token()
+
+        if not access_token:
+            raise ValueError("Failed to acquire access token")
+
+        return {
+            "status": "success",
+            "accessToken": access_token,
+            "tokenType": "Bearer"
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # =========================================================
 # API 1️⃣ : EMBED TOKEN
