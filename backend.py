@@ -9,7 +9,11 @@ from dotenv import load_dotenv
 from msal import ConfidentialClientApplication
 from azure.storage.blob import BlobServiceClient
 
+# 1. IMPORT THE GENERATOR FUNCTIONS (Same as main.py)
 from blob_reader import read_metadata_from_blob, extract_worksheets
+from generator.dataset import generate_dataset_model
+from generator.visual import generate_visual
+from generator.layout import next_position
 
 # =========================================================
 # ENV
@@ -19,18 +23,11 @@ load_dotenv()
 TENANT_ID = os.getenv("TENANT_ID")
 CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
-
 AZURE_STORAGE_CONNECTION_STRING = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
 BLOB_INPUT_CONTAINER = os.getenv("BLOB_INPUT_CONTAINER")
 
-
-RUNTIME_TEMPLATE_BLOB = os.getenv("RUNTIME_TEMPLATE_BLOB")  # runtime_visuals.json
-
-
-
 AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
 SCOPE = ["https://analysis.windows.net/powerbi/api/.default"]
-API_ROOT = "https://api.powerbi.com/v1.0/myorg"
 
 # =========================================================
 # APP
@@ -53,10 +50,8 @@ class EmbedRequest(BaseModel):
     reportId: str
     datasetId: str
 
-
 class RuntimeVisualsRequest(BaseModel):
     metadataBlobPath: str
-
 
 # =========================================================
 # POWER BI AUTH
@@ -70,125 +65,35 @@ def get_access_token() -> str:
     token = app_auth.acquire_token_for_client(scopes=SCOPE)
     return token["access_token"]
 
-
 # =========================================================
-# LOAD runtime_visuals TEMPLATE
+# API: EMBED TOKEN
 # =========================================================
-def load_runtime_template() -> dict:
-    if not AZURE_STORAGE_CONNECTION_STRING or not BLOB_INPUT_CONTAINER :
-        raise RuntimeError("Blob template configuration missing")
-
-    blob_service = BlobServiceClient.from_connection_string(
-        AZURE_STORAGE_CONNECTION_STRING
-    )
-
-    blob_client = blob_service.get_blob_client(
-        container=BLOB_INPUT_CONTAINER,
-        blob="runtime_visuals.json"
-    )
-
-    data = blob_client.download_blob().readall()
-    return json.loads(data)
-
-# =========================================================
-# API 0️⃣ : GET POWER BI ACCESS TOKEN (DEBUG / INTERNAL)
-# =========================================================
-@app.get("/powerbi-access-token")
-def get_powerbi_access_token():
-    try:
-        access_token = get_access_token()
-
-        if not access_token:
-            raise ValueError("Failed to acquire access token")
-
-        return {
-            "status": "success",
-            "accessToken": access_token,
-            "tokenType": "Bearer"
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# =========================================================
-# API 1️⃣ : EMBED TOKEN
-# =========================================================
-# @app.post("/embed-token")
-# def generate_embed_token(data: EmbedRequest):
-#     try:
-#         access_token = get_access_token()
-#         headers = {
-#             "Authorization": f"Bearer {access_token}",
-#             "Content-Type": "application/json"
-#         }
-
-#         report_url = f"{API_ROOT}/groups/{data.workspaceId}/reports/{data.reportId}"
-#         report_res = requests.get(report_url, headers=headers)
-
-#         if report_res.status_code != 200:
-#             raise HTTPException(report_res.status_code, "Failed to fetch report info")
-
-#         report_info = report_res.json()
-#         dataset_id = report_info["datasetId"]
-
-#         token_url = f"{API_ROOT}/groups/{data.workspaceId}/reports/{data.reportId}/GenerateToken"
-#         payload = {
-#             "accessLevel": "Edit",
-#             "allowSaveAs": True,
-#             "datasetId": dataset_id
-#         }
-
-#         token_res = requests.post(token_url, headers=headers, json=payload)
-
-#         if token_res.status_code != 200:
-#             raise HTTPException(token_res.status_code, "Failed to generate embed token")
-
-#         return {
-#             "embedToken": token_res.json()["token"],
-#             "embedUrl": report_info["embedUrl"],
-#             "datasetId": dataset_id
-#         }
-
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.post("/embed-token")
 def generate_embed_token(data: EmbedRequest):
     try:
         access_token = get_access_token()
-
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json"
         }
-
         token_url = (
             f"https://api.powerbi.com/v1.0/myorg/"
             f"groups/{data.workspaceId}/reports/{data.reportId}/GenerateToken"
         )
-
-        # ✅ Dataset explicitly provided (NO RLS)
         payload = {
             "accessLevel": "Edit",
             "allowSaveAs": True,
-            "datasets": [
-                {
-                    "id": data.datasetId
-                }
-            ]
+            "datasets": [{"id": data.datasetId}]
         }
-
         token_res = requests.post(token_url, headers=headers, json=payload)
-
+        
         if token_res.status_code != 200:
             raise HTTPException(
                 status_code=token_res.status_code,
                 detail=token_res.text
             )
-
+            
         token_json = token_res.json()
-
         return {
             "embedToken": token_json["token"],
             "embedUrl": (
@@ -198,13 +103,11 @@ def generate_embed_token(data: EmbedRequest):
             ),
             "datasetId": data.datasetId
         }
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
 # =========================================================
-# API 2️⃣ : GENERATE runtime_visuals.json (JSON ONLY)
+# API: GENERATE runtime_visuals (FIXED TO MATCH MAIN.PY)
 # =========================================================
 @app.post("/runtime-visuals")
 def generate_runtime_visuals(req: RuntimeVisualsRequest):
@@ -216,43 +119,37 @@ def generate_runtime_visuals(req: RuntimeVisualsRequest):
         if not worksheets:
             raise ValueError("No worksheets found in metadata")
 
-        # 2️⃣ Load template
-        runtime_visuals = load_runtime_template()
+        # 2️⃣ Generate Dataset Model to get the correct Table Name
+        # (This matches main.py logic: Step 2)
+        dataset_model = generate_dataset_model(metadata)
+        
+        # Safe extraction of table name
+        table_name = "MainTable"
+        if dataset_model.get("tables") and len(dataset_model["tables"]) > 0:
+            table_name = dataset_model["tables"][0]["name"]
 
-        # 3️⃣ Build visuals (logic from main.py)
-        visuals = []
-        x, y = 40, 40
-
-        for ws in worksheets:
-            name = ws.get("name")
-            columns = ws.get("columns")
-
-            if not name or not columns:
-                continue
-
-            visuals.append({
-                "type": "table",
-                "title": name,
-                "x": x,
-                "y": y,
-                "width": 600,
-                "height": 300,
-                "values": columns
-            })
-
-            y += 340
-
-        if not visuals:
-            raise ValueError("No visuals generated")
-
-        runtime_visuals["visuals"] = visuals
-
-        # ✅ RETURN JSON ONLY
-        return {
-            "status": "success",
-            "visualCount": len(visuals),
-            "runtime_visuals": runtime_visuals
+        # 3️⃣ Initialize Structure (Matches main.py logic: Step 4)
+        runtime_visuals = {
+            "dataset": {
+                "table": table_name
+            },
+            "visuals": []
         }
 
+        # 4️⃣ Iterate and Build Visuals using Generator
+        for i, ws in enumerate(worksheets):
+            # Calculate Position (Matches main.py)
+            pos = next_position(i)
+
+            # Generate Visual using the helper function (Matches main.py)
+            visual_json = generate_visual(ws, table_name, pos["x"], pos["y"])
+
+            runtime_visuals["visuals"].append(visual_json)
+
+        # 5️⃣ Return the exact dictionary (No wrapper status object)
+        return runtime_visuals
+
     except Exception as e:
+        # Print error to console for debugging
+        print(f"Error generating visuals: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
