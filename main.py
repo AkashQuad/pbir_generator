@@ -123,6 +123,87 @@
 # print("🎉 PBIR generation completed successfully")
 
 
+# import os
+# import json
+# from dotenv import load_dotenv
+# from blob_reader import load_metadata, extract_worksheets
+# from generator.dataset import generate_dataset_model
+# from generator.visual import generate_visual
+# from generator.layout import next_position
+# from generator.report import generate_definition, generate_item_config
+
+# # -------------------- ENV --------------------
+# load_dotenv()
+
+# # -------------------- PATHS --------------------
+# BASE_REPORT_DIR = "output/MyReport.Report"
+# VISUAL_DIR = f"{BASE_REPORT_DIR}/static/visuals"
+# DATASET_DIR = f"{BASE_REPORT_DIR}/dataset"
+# OUTPUT_DIR = "output"
+
+# os.makedirs(VISUAL_DIR, exist_ok=True)
+# os.makedirs(DATASET_DIR, exist_ok=True)
+# os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# # -------------------- 1️⃣ LOAD METADATA --------------------
+# metadata = load_metadata()
+# worksheets = extract_worksheets(metadata)
+# if not worksheets:
+#     raise Exception("No worksheets found in metadata!")
+
+# # -------------------- 2️⃣ GENERATE DATASET MODEL --------------------
+# dataset_model = generate_dataset_model(metadata)
+# table_name = dataset_model["tables"][0]["name"] if dataset_model["tables"] else "MainTable"
+
+# with open(f"{DATASET_DIR}/model.json", "w", encoding="utf-8") as f:
+#     json.dump(dataset_model, f, indent=2)
+
+# # -------------------- 3️⃣ GENERATE REPORT ROOT FILES --------------------
+# report_definition = generate_definition()
+# report_name = metadata.get("workbookName", "Auto Generated Report")
+# item_config = generate_item_config(report_name)
+
+# # -------------------- 4️⃣ CREATE PAGES AND VISUALS --------------------
+# pages = []
+# runtime_visuals = {"dataset": {"table": table_name}, "visuals": []}
+
+# for i, ws in enumerate(worksheets):
+#     # Position for visual
+#     pos = next_position(i)
+
+#     # Generate visual with correct table binding
+#     visual_json = generate_visual(ws, table_name, pos["x"], pos["y"])
+
+#     # Save visual file
+#     with open(f"{VISUAL_DIR}/visual{i+1}.json", "w", encoding="utf-8") as f:
+#         json.dump(visual_json, f, indent=2)
+
+#     # Append to runtime visuals
+#     runtime_visuals["visuals"].append(visual_json)
+
+#     # Each worksheet becomes a page
+#     page = {
+#         "name": ws.get("name", f"Page {i+1}"),
+#         "visuals": [visual_json]
+#     }
+#     pages.append(page)
+
+# # Assign pages to report definition
+# report_definition["pages"] = pages
+
+# # -------------------- 5️⃣ SAVE REPORT ROOT FILES --------------------
+# with open(f"{BASE_REPORT_DIR}/definition.pbir", "w", encoding="utf-8") as f:
+#     json.dump(report_definition, f, indent=2)
+
+# with open(f"{BASE_REPORT_DIR}/item.config.json", "w", encoding="utf-8") as f:
+#     json.dump(item_config, f, indent=2)
+
+# # -------------------- 6️⃣ SAVE RUNTIME VISUALS --------------------
+# with open("output/runtime_visuals.json", "w", encoding="utf-8") as f:
+#     json.dump(runtime_visuals, f, indent=2)
+
+# print(f"✅ PBIR project generated successfully with {len(worksheets)} page(s) and visuals.")
+
 import os
 import json
 from dotenv import load_dotenv
@@ -152,9 +233,10 @@ if not worksheets:
     raise Exception("No worksheets found in metadata!")
 
 # -------------------- 2️⃣ GENERATE DATASET MODEL --------------------
+# This now includes the 'relationships' array generated from your metadata
 dataset_model = generate_dataset_model(metadata)
-table_name = dataset_model["tables"][0]["name"] if dataset_model["tables"] else "MainTable"
 
+# Save the dataset model (model.json)
 with open(f"{DATASET_DIR}/model.json", "w", encoding="utf-8") as f:
     json.dump(dataset_model, f, indent=2)
 
@@ -165,41 +247,61 @@ item_config = generate_item_config(report_name)
 
 # -------------------- 4️⃣ CREATE PAGES AND VISUALS --------------------
 pages = []
-runtime_visuals = {"dataset": {"table": table_name}, "visuals": []}
+runtime_visuals = {"visuals": []}
 
 for i, ws in enumerate(worksheets):
+    # ✅ DYNAMIC TABLE SELECTION:
+    # Instead of defaulting to 'MainTable', we extract the specific table
+    # name associated with this worksheet from the metadata.
+    current_table_name = ws.get("tableName") or ws.get("table")
+    
+    # Fallback logic: check the first column's table if worksheet table is missing
+    if not current_table_name and ws.get("columns"):
+        current_table_name = ws["columns"][0].get("table")
+    
+    # Absolute fallback if metadata is sparse
+    if not current_table_name:
+        current_table_name = "fact_sales"
+
     # Position for visual
     pos = next_position(i)
 
-    # Generate visual with correct table binding
-    visual_json = generate_visual(ws, table_name, pos["x"], pos["y"])
+    # ✅ Generate visual with the SPECIFIC table binding
+    visual_json = generate_visual(ws, current_table_name, pos["x"], pos["y"])
 
-    # Save visual file
-    with open(f"{VISUAL_DIR}/visual{i+1}.json", "w", encoding="utf-8") as f:
+    # Save individual visual files
+    visual_filename = f"visual{i+1}.json"
+    with open(f"{VISUAL_DIR}/{visual_filename}", "w", encoding="utf-8") as f:
         json.dump(visual_json, f, indent=2)
 
-    # Append to runtime visuals
-    runtime_visuals["visuals"].append(visual_json)
+    # Append to runtime tracking
+    runtime_visuals["visuals"].append({
+        "pageName": ws.get("name"),
+        "table": current_table_name,
+        "file": visual_filename
+    })
 
-    # Each worksheet becomes a page
+    # Create the page structure
     page = {
         "name": ws.get("name", f"Page {i+1}"),
         "visuals": [visual_json]
     }
     pages.append(page)
 
-# Assign pages to report definition
+# Assign pages to the report definition
 report_definition["pages"] = pages
 
 # -------------------- 5️⃣ SAVE REPORT ROOT FILES --------------------
+# .pbir file links the report to the dataset folder
 with open(f"{BASE_REPORT_DIR}/definition.pbir", "w", encoding="utf-8") as f:
     json.dump(report_definition, f, indent=2)
 
 with open(f"{BASE_REPORT_DIR}/item.config.json", "w", encoding="utf-8") as f:
     json.dump(item_config, f, indent=2)
 
-# -------------------- 6️⃣ SAVE RUNTIME VISUALS --------------------
+# -------------------- 6️⃣ SAVE RUNTIME SUMMARY --------------------
 with open("output/runtime_visuals.json", "w", encoding="utf-8") as f:
     json.dump(runtime_visuals, f, indent=2)
 
-print(f"✅ PBIR project generated successfully with {len(worksheets)} page(s) and visuals.")
+print(f"✅ PBIR project generated successfully.")
+print(f"✅ Tables mapped: {list(set(v['table'] for v in runtime_visuals['visuals']))}")
